@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>漢字クイズ - 漢字でGO!風</title>
+  <link rel="stylesheet" href="kanjigo.css">
+</head>
+<body>
+  <div class="container">
+    <h1>漢字クイズ（漢字でGO!風）</h1>
+    <div class="hud">
+      <div id="score">スコア: 0</div>
+      <div id="errors">ミス: 0 / 3</div>
+      <div id="qtime">残り（問）: 10</div>
+      <button id="start">スタート</button>
+    </div>
+    <div id="question-count-top" class="top-left">問: 0 / 20</div>
+
+    <div class="game">
+      <div id="kanji" class="kanji">日</div>
+      <div id="meaning" class="meaning">意味: —</div>
+      <div class="input-area">
+        <input id="answer" class="answer" type="text" placeholder="ひらがな／ローマ字で入力" autocomplete="off">
+        <button id="submit" class="submit">送信</button>
+      </div>
+      <div id="feedback" class="feedback" aria-live="polite"></div>
+      <!-- timeout modal -->
+      <div id="timeout-modal" class="modal" aria-hidden="true">
+        <div class="modal-content">
+          <div class="modal-title">時間切れ！</div>
+          <div class="modal-body">続けますか？それともヒントを見ますか？</div>
+          <div class="modal-actions">
+            <button id="continue-btn" class="modal-btn">続ける (+5秒)</button>
+            <button id="hint-btn" class="modal-btn">ヒントを見る</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  <p class="note">ルール: 全20問。各問に制限時間があり、時間切れで次問に進みます。正解で得点、連続正解でボーナス。</p>
+  </div>
+  </div>
+
+  <!-- decorative overlays (purely visual) -->
+  <div class="sakura-accents" aria-hidden="true"></div>
+  <div class="gold-flecks" aria-hidden="true"></div>
+
+  <script src="kanjigo.js"></script>
+</body>
+</html>
