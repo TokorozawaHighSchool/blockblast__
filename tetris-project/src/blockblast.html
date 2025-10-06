@@ -5,15 +5,19 @@
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>ブロックブラスト風ゲーム</title>
   <style>
-    body { background: #fafafa; font-family: sans-serif; text-align: center; }
-    #gameCanvas { border: 2px solid #333; display: block; margin: 0 auto; background: #fff; }
+    body { background: linear-gradient(180deg,#f3fbff,#eaf7ff); font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; text-align: center; color:#204055; }
+    #gameCanvas { border: 2px solid rgba(126,174,196,0.6); display: block; margin: 12px auto; background: #ffffff; box-shadow: 0 6px 14px rgba(30,70,90,0.06); }
     .controls { margin-top: 10px; }
     button { font-size: 1.1em; margin: 0 5px; padding: 6px 16px; }
-    h1 { margin-top: 24px; }
+  .block-palette { display: flex; justify-content: center; gap: 12px; margin-top: 12px; }
+  .block-item { cursor: pointer; background: rgba(255,255,255,0.9); border: 1px solid rgba(126,174,196,0.18); padding: 8px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 10px rgba(30,70,90,0.06); }
+  .block-item:hover{ transform: translateY(-4px); transition: transform .12s ease; box-shadow: 0 8px 18px rgba(30,70,90,0.09);} 
+    h1 { margin-top: 18px; font-weight: 600; color:#1e465a }
   </style>
 </head>
 <body>
   <h1>ブロックブラスト風ゲーム</h1>
+  <div id="scoreDisplay" style="font-size:1.1rem; color:#163442; margin-top:6px;">スコア: 0</div>
   <canvas id="gameCanvas" width="320" height="320"></canvas>
   <div class="block-palette" id="blockPalette"></div>
   <script src="blockblast.js"></script>
