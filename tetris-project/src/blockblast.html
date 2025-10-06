@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>ブロックブラスト風ゲーム</title>
+  <style>
+    body { background: #fafafa; font-family: sans-serif; text-align: center; }
+    #gameCanvas { border: 2px solid #333; display: block; margin: 0 auto; background: #fff; }
+    .controls { margin-top: 10px; }
+    button { font-size: 1.1em; margin: 0 5px; padding: 6px 16px; }
+    h1 { margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <h1>ブロックブラスト風ゲーム</h1>
+  <canvas id="gameCanvas" width="320" height="320"></canvas>
+  <div class="block-palette" id="blockPalette"></div>
+  <script src="blockblast.js"></script>
+</body>
+</html>
