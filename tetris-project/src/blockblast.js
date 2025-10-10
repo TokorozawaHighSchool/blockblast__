@@ -1,9 +1,15 @@
 // 積み上げ型ブロックブラスト
 const COLS = 8;
 const ROWS = 8;
-const BLOCK_SIZE = 40;
+const BLOCK_SIZE = 60;
 // 白基調の寒色系パレット（やや濃く、紫系を追加）
-const COLORS = ['#f3fbff','#dff5ff','#cfeaff','#9fdff6','#7fcff6','#6fb8e6','#b9a8ff','#a08bff'];
+const COLORS = [
+  '#f3fbff','#dff5ff','#cfeaff','#9fdff6','#7fcff6','#6fb8e6','#b9a8ff','#a08bff', // 既存寒色系
+  '#ffb3b3','#ff6666','#ffb347','#ffe066', // 赤・オレンジ・黄系
+  '#b3ffb3','#66ff66','#47ffb3','#66ffe0', // 緑・エメラルド系
+  '#b3b3ff','#6666ff','#e066ff','#ff66d9', // 青・紫・ピンク系
+  '#ff99cc','#ffccf9','#c2f0fc','#f6ffb3'  // パステル系
+];
 const SHAPES = [
   // Tetromino + some extra shapes
   [[1,1,1,1]], // I
@@ -20,18 +26,24 @@ const SHAPES = [
   [[1,1,1]], // horizontal 3
   [[1,0],[1,0],[1,1]], // small L (3 tall)
   [[0,1],[0,1],[1,1]], // mirrored small L
-  [[0,1,0],[1,1,1],[0,1,0]], // plus-like
-  [[1,1,1],[0,1,0],[0,1,0]] // T-like tall
+  [[1,1,1],[1,1,1],[1,1,1]], // 9マス正方形（3x3）
+  [[1],[1],[1],[1]], // 縦長4
+  [[1],[1],[1],[1],[1]], // 縦長5
+  [[1,1,1],[0,1,0],[0,1,0]], // T-like tall
+  // L字型（横3＋縦3、縦棒が端）
+  [[1,1,1],[1,0,0],[1,0,0]], // L字型（左端）
+  [[1,1,1],[0,0,1],[0,0,1]] // L字型（右端）
 ];
 let grid = Array.from({length:ROWS},()=>Array(COLS).fill(0));
 let blockScore = 0;
+let comboMultiplier = 1;
 let gameOver = false;
 const scoreEl = document.getElementById('scoreDisplay');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas ? canvas.getContext('2d') : null;
 const paletteDiv = document.getElementById('blockPalette');
 
-function drawGrid() {
+function drawGrid(glowingRows = [], glowingCols = []) {
   if (!ctx) return;
   ctx.clearRect(0,0,canvas.width,canvas.height);
   // 升目（グリッド線）を描画（淡い寒色）
@@ -55,25 +67,54 @@ function drawGrid() {
       if(grid[y][x]){
         const color = getColor(grid[y][x]-1);
         const gx = x*BLOCK_SIZE, gy = y*BLOCK_SIZE;
-  ctx.fillStyle = color;
-  ctx.fillRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
-  // ガラス風の光沢（上部に半透明グラデ）
-  const glossGrad = ctx.createLinearGradient(gx, gy, gx, gy + BLOCK_SIZE * 0.5);
-  glossGrad.addColorStop(0, 'rgba(255,255,255,0.85)');
-  glossGrad.addColorStop(1, 'rgba(255,255,255,0.08)');
-  ctx.fillStyle = glossGrad;
-  ctx.fillRect(gx + 2, gy + 2, BLOCK_SIZE - 4, Math.floor(BLOCK_SIZE * 0.45));
-  // 小さなハイライト点
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.beginPath();
-  ctx.ellipse(gx + BLOCK_SIZE * 0.26, gy + BLOCK_SIZE * 0.16, BLOCK_SIZE * 0.12, BLOCK_SIZE * 0.06, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // 輪郭
-  ctx.strokeStyle = '#7eaec4';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
+        ctx.fillStyle = color;
+        ctx.fillRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
+        // 光らせる行・列なら上書き
+        if (glowingRows.includes(y) || glowingCols.includes(x)) {
+          // 強い黄色～白グラデーションで光らせる
+          const glowGrad = ctx.createLinearGradient(gx, gy, gx, gy + BLOCK_SIZE);
+          glowGrad.addColorStop(0, 'rgba(255,255,0,0.95)');
+          glowGrad.addColorStop(0.5, 'rgba(255,255,180,0.85)');
+          glowGrad.addColorStop(1, 'rgba(255,255,255,0.7)');
+          ctx.fillStyle = glowGrad;
+          ctx.fillRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
+          // 枠線も黄色に
+          ctx.strokeStyle = '#ffe600';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
+        }
+        // ガラス風の光沢（上部に半透明グラデ）
+        const glossGrad = ctx.createLinearGradient(gx, gy, gx, gy + BLOCK_SIZE * 0.5);
+        glossGrad.addColorStop(0, 'rgba(255,255,255,0.85)');
+        glossGrad.addColorStop(1, 'rgba(255,255,255,0.08)');
+        ctx.fillStyle = glossGrad;
+        ctx.fillRect(gx + 2, gy + 2, BLOCK_SIZE - 4, Math.floor(BLOCK_SIZE * 0.45));
+        // 小さなハイライト点
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.beginPath();
+        ctx.ellipse(gx + BLOCK_SIZE * 0.26, gy + BLOCK_SIZE * 0.16, BLOCK_SIZE * 0.12, BLOCK_SIZE * 0.06, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // 輪郭
+        ctx.strokeStyle = '#7eaec4';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
       }
     }
+  }
+  // ゲームオーバー時に「No Space」をブロック風フォントで表示
+  if(gameOver && ctx){
+    ctx.save();
+    ctx.font = `bold ${Math.floor(canvas.width/7)}px 'Press Start 2P', 'Arial Black', 'sans-serif'`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#222';
+    ctx.strokeStyle = '#ffe600';
+    ctx.lineWidth = 6;
+    const msg = 'No Space';
+    ctx.strokeText(msg, canvas.width/2, canvas.height/2);
+    ctx.fillStyle = '#ffe600';
+    ctx.fillText(msg, canvas.width/2, canvas.height/2);
+    ctx.restore();
   }
 }
 
@@ -83,20 +124,53 @@ function getColor(idx){
 }
 
 function clearLines(){
-  let lines = 0;
+  let glowingRows = [];
+  let glowingCols = [];
+  // 横ライン検出
   for(let y=ROWS-1;y>=0;y--){
     if(grid[y].every(cell=>cell)){
-      grid.splice(y,1);
-      grid.unshift(Array(COLS).fill(0));
-      lines++;
-      y++;
+      glowingRows.push(y);
     }
   }
-  if(lines>0){
-  // ライン消去ボーナス
-  blockScore += lines*150;
-  updateScore();
-    drawGrid();
+  // 縦ライン検出
+  for(let x=0;x<COLS;x++){
+    let colFull = true;
+    for(let y=0;y<ROWS;y++){
+      if(!grid[y][x]){ colFull = false; break; }
+    }
+    if(colFull) glowingCols.push(x);
+  }
+  if(glowingRows.length > 0 || glowingCols.length > 0){
+    // 光らせる
+    drawGrid(glowingRows, glowingCols);
+    setTimeout(()=>{
+      drawGrid(glowingRows, glowingCols);
+      setTimeout(()=>{
+        let lines = 0;
+        // 横ライン消去
+        for(let i=0;i<glowingRows.length;i++){
+          const y = glowingRows[i];
+          grid.splice(y,1);
+          grid.unshift(Array(COLS).fill(0));
+          lines++;
+        }
+        // 縦ライン消去
+        for(let i=0;i<glowingCols.length;i++){
+          const x = glowingCols[i];
+          for(let y=0;y<ROWS;y++){
+            grid[y][x] = 0;
+          }
+          lines++;
+        }
+        // ライン消去ボーナス（連鎖倍率適用）
+        blockScore += lines*50*comboMultiplier;
+        comboMultiplier++;
+        updateScore();
+        drawGrid();
+      }, 180);
+    }, 180);
+  } else {
+    comboMultiplier = 1;
   }
 }
 
@@ -131,7 +205,7 @@ function placeBlock(shape, px, py, colorIdx){
     const nx = px+x, ny = py+y;
     if(nx>=0&&nx<COLS&&ny>=0&&ny<ROWS) placed++;
   }
-  blockScore += placed * 10;
+  blockScore += placed;
   updateScore();
   clearLines();
   drawGrid();
@@ -143,26 +217,29 @@ function updateScore(){
 
 function drawBlockPreview(shape, colorIdx, ctx2d, offsetX, offsetY){
   const base = getColor(colorIdx);
+  // プレビュー用: 必ず正方形で描画
   for(let y=0;y<shape.length;y++){
     for(let x=0;x<shape[y].length;x++){
       if(shape[y][x]){
-        const gx = offsetX + x*BLOCK_SIZE;
-        const gy = offsetY + y*BLOCK_SIZE;
-  ctx2d.fillStyle = base;
-  ctx2d.fillRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
-  // プレビューにも光沢
-  const pGrad = ctx2d.createLinearGradient(gx, gy, gx, gy + BLOCK_SIZE * 0.5);
-  pGrad.addColorStop(0, 'rgba(255,255,255,0.85)');
-  pGrad.addColorStop(1, 'rgba(255,255,255,0.08)');
-  ctx2d.fillStyle = pGrad;
-  ctx2d.fillRect(gx + 2, gy + 2, BLOCK_SIZE - 4, Math.floor(BLOCK_SIZE * 0.45));
-  ctx2d.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx2d.beginPath();
-  ctx2d.ellipse(gx + BLOCK_SIZE * 0.26, gy + BLOCK_SIZE * 0.16, BLOCK_SIZE * 0.12, BLOCK_SIZE * 0.06, 0, 0, Math.PI * 2);
-  ctx2d.fill();
-  ctx2d.strokeStyle = '#7eaec4';
-  ctx2d.lineWidth = 1;
-  ctx2d.strokeRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
+        // 正方形で描画
+        const size = BLOCK_SIZE;
+        const gx = offsetX + x*size;
+        const gy = offsetY + y*size;
+        ctx2d.fillStyle = base;
+        ctx2d.fillRect(gx, gy, size, size);
+        // 光沢
+        const pGrad = ctx2d.createLinearGradient(gx, gy, gx, gy + size * 0.5);
+        pGrad.addColorStop(0, 'rgba(255,255,255,0.85)');
+        pGrad.addColorStop(1, 'rgba(255,255,255,0.08)');
+        ctx2d.fillStyle = pGrad;
+        ctx2d.fillRect(gx + 2, gy + 2, size - 4, Math.floor(size * 0.45));
+        ctx2d.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx2d.beginPath();
+        ctx2d.ellipse(gx + size * 0.26, gy + size * 0.16, size * 0.12, size * 0.06, 0, 0, Math.PI * 2);
+        ctx2d.fill();
+        ctx2d.strokeStyle = '#7eaec4';
+        ctx2d.lineWidth = 1;
+        ctx2d.strokeRect(gx, gy, size, size);
       }
     }
   }
@@ -222,15 +299,32 @@ function createPalette(){
   if(currentPalette.length === 0){
     let count = 0;
     while(count < 3){
-      const idx = Math.floor(Math.random()*SHAPES.length);
+      // 1・2ブロックは最も低確率、3ブロックはやや低確率、9マス正方形・縦長4/5・L字型は低確率、その他は高確率
+      let idx;
+      const r = Math.random();
+      if(r < 0.07){
+        // 7%の確率で1・2ブロック（SHAPESの最初の2つ）
+        idx = Math.floor(Math.random()*2);
+      }else if(r < 0.22){
+        // 15%の確率で3ブロック（SHAPESの3～4番目）
+        idx = 2 + Math.floor(Math.random()*3);
+      }else if(r < 0.37){
+        // 15%の確率で9マス正方形・縦長4/5・L字型（SHAPESの14～22番目）
+        idx = 14 + Math.floor(Math.random()*9);
+      }else{
+        // 63%の確率で他のブロック
+        idx = 5 + Math.floor(Math.random()*(14-5));
+      }
       let shape = SHAPES[idx];
       // ランダム回転
       const rotations = Math.floor(Math.random()*4);
       for(let r=0;r<rotations;r++) shape = rotateShape(shape);
       // ランダム反転
       if(Math.random() < 0.5) shape = flipShape(shape);
-      // 枠内に収まるサイズのみ追加
-      if(shape.length <= ROWS && shape[0].length <= COLS){
+      // 枠内に収まるサイズかつ正方形ブロックは4マスまで
+      const blockCount = shape.flat().reduce((a,b)=>a+b,0);
+      const isSquare = shape.length === shape[0].length && shape.length > 1;
+      if(shape.length <= ROWS && shape[0].length <= COLS && (!isSquare || blockCount <= 4)){
         const colorChoice = Math.floor(Math.random()*COLORS.length);
         currentPalette.push({shape: shape, colorIdx: colorChoice});
         count++;
@@ -240,13 +334,20 @@ function createPalette(){
   currentPalette.forEach((item, i) => {
     const shape = item.shape;
     const colorIdx = item.colorIdx;
+    // プレビューは必ず正方形のcanvas（最大サイズ基準）
+    const blockW = shape[0].length;
+    const blockH = shape.length;
+    const canvasSize = Math.max(blockW, blockH) * BLOCK_SIZE;
     const canvasEl = document.createElement('canvas');
-    canvasEl.width = shape[0].length*BLOCK_SIZE;
-    canvasEl.height = shape.length*BLOCK_SIZE;
+    canvasEl.width = canvasSize;
+    canvasEl.height = canvasSize;
     canvasEl.className = 'block-item';
     if(selectedBlockIdx === i) canvasEl.style.border = '2px solid #2196f3';
     const ctx2d = canvasEl.getContext('2d');
-    drawBlockPreview(shape, colorIdx, ctx2d, 0, 0);
+    // 中央に配置
+    const offsetX = Math.floor((canvasSize - blockW*BLOCK_SIZE)/2);
+    const offsetY = Math.floor((canvasSize - blockH*BLOCK_SIZE)/2);
+    drawBlockPreview(shape, colorIdx, ctx2d, offsetX, offsetY);
     canvasEl.addEventListener('click', () => {
       selectedBlockIdx = i;
       previewPx = null; previewPy = null;
@@ -254,6 +355,27 @@ function createPalette(){
     });
     paletteDiv.appendChild(canvasEl);
   });
+  // ゲームオーバー判定: 表示中のブロックがどこにも置けない場合
+  if(currentPalette.length > 0) {
+    let canPlaceAny = false;
+    for(let i=0; i<currentPalette.length; i++) {
+      const shape = currentPalette[i].shape;
+      for(let py=0; py<=ROWS-shape.length; py++) {
+        for(let px=0; px<=COLS-shape[0].length; px++) {
+          if(canPlaceBlock(shape, px, py)) {
+            canPlaceAny = true;
+            break;
+          }
+        }
+        if(canPlaceAny) break;
+      }
+      if(canPlaceAny) break;
+    }
+    if(!canPlaceAny) {
+      gameOver = true;
+      alert('ゲームオーバー！置ける場所がありません');
+    }
+  }
 }
 
 // クリックで配置（選択中ブロックがあれば）
