@@ -34,6 +34,13 @@ const SHAPES = [
   [[1,1,1],[1,0,0],[1,0,0]], // L字型（左端）
   [[1,1,1],[0,0,1],[0,0,1]] // L字型（右端）
 ];
+const blocks = [
+  [[1]], // 1ブロック
+  // 他のブロック定義
+  [[1,1]],
+  [[1,1,1]],
+  // ...他の形...
+];
 let grid = Array.from({length:ROWS},()=>Array(COLS).fill(0));
 let blockScore = 0;
 let comboMultiplier = 1;
@@ -42,6 +49,9 @@ const scoreEl = document.getElementById('scoreDisplay');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas ? canvas.getContext('2d') : null;
 const paletteDiv = document.getElementById('blockPalette');
+if(!paletteDiv) {
+  alert('paletteDivが取得できません。HTMLに<div id="blockPalette"></div>があるか確認してください。');
+}
 
 function drawGrid(glowingRows = [], glowingCols = []) {
   if (!ctx) return;
@@ -147,11 +157,10 @@ function clearLines(){
       drawGrid(glowingRows, glowingCols);
       setTimeout(()=>{
         let lines = 0;
-        // 横ライン消去
+        // 横ライン消去（位置はそのまま、消えた行だけ0埋め）
         for(let i=0;i<glowingRows.length;i++){
           const y = glowingRows[i];
-          grid.splice(y,1);
-          grid.unshift(Array(COLS).fill(0));
+          grid[y] = Array(COLS).fill(0);
           lines++;
         }
         // 縦ライン消去
@@ -164,9 +173,37 @@ function clearLines(){
         }
         // ライン消去ボーナス（連鎖倍率適用）
         blockScore += lines*50*comboMultiplier;
+  blockScore += lines*100*comboMultiplier;
         comboMultiplier++;
         updateScore();
         drawGrid();
+        // 全消し判定（盤面がすべて0）
+        const isAllClear = grid.every(row => row.every(cell => cell === 0));
+        if(isAllClear) {
+          blockScore += 1000; // 全消しボーナス
+          updateScore();
+        }
+        // ライン消去後にpalette内のブロックがどこにも置けない場合はゲームオーバー
+        if(currentPalette.length > 0) {
+          let canPlaceAny = false;
+          for(let i=0; i<currentPalette.length; i++) {
+            const shape = currentPalette[i].shape;
+            for(let py=0; py<=ROWS-shape.length; py++) {
+              for(let px=0; px<=COLS-shape[0].length; px++) {
+                if(canPlaceBlock(shape, px, py)) {
+                  canPlaceAny = true;
+                  break;
+                }
+              }
+              if(canPlaceAny) break;
+            }
+            if(canPlaceAny) break;
+          }
+          if(!canPlaceAny) {
+            gameOver = true;
+            alert('ゲームオーバー！置ける場所がありません');
+          }
+        }
       }, 180);
     }, 180);
   } else {
@@ -206,6 +243,8 @@ function placeBlock(shape, px, py, colorIdx){
     if(nx>=0&&nx<COLS&&ny>=0&&ny<ROWS) placed++;
   }
   blockScore += placed;
+  blockScore += placed;
+  blockScore += placed; // 2倍加点
   updateScore();
   clearLines();
   drawGrid();
@@ -295,33 +334,28 @@ let selectedBlockIdx = null;
 let previewPx = null;
 let previewPy = null;
 function createPalette(){
+  if(!paletteDiv) return;
   paletteDiv.innerHTML = '';
   if(currentPalette.length === 0){
     let count = 0;
-    while(count < 3){
+    let tries = 0;
+    while(count < 3 && tries < 100){
       // 1・2ブロックは最も低確率、3ブロックはやや低確率、9マス正方形・縦長4/5・L字型は低確率、その他は高確率
       let idx;
       const r = Math.random();
       if(r < 0.07){
-        // 7%の確率で1・2ブロック（SHAPESの最初の2つ）
         idx = Math.floor(Math.random()*2);
       }else if(r < 0.22){
-        // 15%の確率で3ブロック（SHAPESの3～4番目）
         idx = 2 + Math.floor(Math.random()*3);
       }else if(r < 0.37){
-        // 15%の確率で9マス正方形・縦長4/5・L字型（SHAPESの14～22番目）
         idx = 14 + Math.floor(Math.random()*9);
       }else{
-        // 63%の確率で他のブロック
         idx = 5 + Math.floor(Math.random()*(14-5));
       }
       let shape = SHAPES[idx];
-      // ランダム回転
       const rotations = Math.floor(Math.random()*4);
       for(let r=0;r<rotations;r++) shape = rotateShape(shape);
-      // ランダム反転
       if(Math.random() < 0.5) shape = flipShape(shape);
-      // 枠内に収まるサイズかつ正方形ブロックは4マスまで
       const blockCount = shape.flat().reduce((a,b)=>a+b,0);
       const isSquare = shape.length === shape[0].length && shape.length > 1;
       if(shape.length <= ROWS && shape[0].length <= COLS && (!isSquare || blockCount <= 4)){
@@ -329,6 +363,11 @@ function createPalette(){
         currentPalette.push({shape: shape, colorIdx: colorChoice});
         count++;
       }
+      tries++;
+    }
+    // paletteが1つも埋まらなかった場合は、必ず1ブロック（[[1]]）を追加
+    if(currentPalette.length === 0){
+      currentPalette.push({shape: [[1]], colorIdx: 0});
     }
   }
   currentPalette.forEach((item, i) => {
@@ -349,13 +388,12 @@ function createPalette(){
     const offsetY = Math.floor((canvasSize - blockH*BLOCK_SIZE)/2);
     drawBlockPreview(shape, colorIdx, ctx2d, offsetX, offsetY);
     canvasEl.addEventListener('click', () => {
-      selectedBlockIdx = i;
-      previewPx = null; previewPy = null;
-      createPalette();
+  selectedBlockIdx = i;
+  previewPx = null; previewPy = null;
     });
     paletteDiv.appendChild(canvasEl);
   });
-  // ゲームオーバー判定: 表示中のブロックがどこにも置けない場合
+  // palette生成後にゲームオーバー判定
   if(currentPalette.length > 0) {
     let canPlaceAny = false;
     for(let i=0; i<currentPalette.length; i++) {
@@ -372,8 +410,13 @@ function createPalette(){
       if(canPlaceAny) break;
     }
     if(!canPlaceAny) {
-      gameOver = true;
-      alert('ゲームオーバー！置ける場所がありません');
+      if(!gameOver) {
+        gameOver = true;
+        alert('ゲームオーバー！置ける場所がありません');
+      }
+    } else {
+      // 置けるブロックがあればゲーム続行
+      if(gameOver) gameOver = false;
     }
   }
 }
@@ -396,10 +439,7 @@ canvas.onmousedown = function(e) {
     currentPalette.splice(selectedBlockIdx, 1);
     selectedBlockIdx = null;
     previewPx = null; previewPy = null;
-    createPalette();
-    if(currentPalette.length === 0){
-      setTimeout(()=>{ currentPalette = []; createPalette(); }, 300);
-    }
+  createPalette();
   } else {
     alert('その位置には置けません');
   }
