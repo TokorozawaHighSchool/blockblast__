@@ -45,6 +45,10 @@ let grid = Array.from({length:ROWS},()=>Array(COLS).fill(0));
 let blockScore = 0;
 let comboMultiplier = 1;
 let gameOver = false;
+// 1ゲームあたりに生成できるブロックのセル数合計の上限（配置済みセル数 + パレット内セル数合計で管理）
+const BLOCKS_PER_GAME_LIMIT = 5000;
+// プレイヤーが実際に配置したセル数の合計をカウント
+let blocksPlaced = 0;
 const scoreEl = document.getElementById('scoreDisplay');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas ? canvas.getContext('2d') : null;
@@ -113,18 +117,32 @@ function drawGrid(glowingRows = [], glowingCols = []) {
   }
   // ゲームオーバー時に「No Space」をブロック風フォントで表示
   if(gameOver && ctx){
-    ctx.save();
-    ctx.font = `bold ${Math.floor(canvas.width/7)}px 'Press Start 2P', 'Arial Black', 'sans-serif'`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#222';
-    ctx.strokeStyle = '#ffe600';
-    ctx.lineWidth = 6;
-    const msg = 'No Space';
-    ctx.strokeText(msg, canvas.width/2, canvas.height/2);
-    ctx.fillStyle = '#ffe600';
-    ctx.fillText(msg, canvas.width/2, canvas.height/2);
-    ctx.restore();
+  ctx.save();
+  // 半透明オーバーレイで背景を暗くする
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // 大きな見出し（英語）
+  const mainMsg = 'GAME OVER';
+  const mainFontSize = Math.floor(canvas.width * 0.16); // 画面幅に対して大きめ
+  ctx.font = `bold ${mainFontSize}px 'Press Start 2P', 'Arial Black', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // 外枠（暗）→ 内側の明色で視認性を確保
+  ctx.lineWidth = Math.max(6, Math.floor(canvas.width * 0.02));
+  ctx.strokeStyle = '#222';
+  ctx.strokeText(mainMsg, canvas.width/2, canvas.height/2 - Math.floor(mainFontSize*0.08));
+  ctx.fillStyle = '#ffe600';
+  ctx.fillText(mainMsg, canvas.width/2, canvas.height/2 - Math.floor(mainFontSize*0.08));
+
+  // 補助テキスト（日本語または短い説明）
+  const subMsg = '置けるブロックがありません';
+  const subFontSize = Math.floor(canvas.width * 0.055);
+  ctx.font = `bold ${subFontSize}px 'Arial', sans-serif`;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(subMsg, canvas.width/2, canvas.height/2 + Math.floor(mainFontSize*0.26));
+
+  ctx.restore();
   }
 }
 
@@ -248,6 +266,14 @@ function placeBlock(shape, px, py, colorIdx){
   updateScore();
   clearLines();
   drawGrid();
+  // プレイヤーが実際に配置した回数をカウント
+  // 配置したブロックのマス数合計を加算
+  let placedCells = 0;
+  for(let y=0;y<shape.length;y++) for(let x=0;x<shape[y].length;x++) if(shape[y][x]){
+    const nx = px+x, ny = py+y;
+    if(nx>=0&&nx<COLS&&ny>=0&&ny<ROWS) placedCells++;
+  }
+  blocksPlaced += placedCells;
 }
 
 function updateScore(){
@@ -336,38 +362,82 @@ let previewPy = null;
 function createPalette(){
   if(!paletteDiv) return;
   paletteDiv.innerHTML = '';
-  if(currentPalette.length === 0){
-    let count = 0;
-    let tries = 0;
-    while(count < 3 && tries < 100){
-      // 1・2ブロックは最も低確率、3ブロックはやや低確率、9マス正方形・縦長4/5・L字型は低確率、その他は高確率
-      let idx;
-      const r = Math.random();
-      if(r < 0.07){
-        idx = Math.floor(Math.random()*2);
-      }else if(r < 0.22){
-        idx = 2 + Math.floor(Math.random()*3);
-      }else if(r < 0.37){
-        idx = 14 + Math.floor(Math.random()*9);
-      }else{
-        idx = 5 + Math.floor(Math.random()*(14-5));
-      }
-      let shape = SHAPES[idx];
-      const rotations = Math.floor(Math.random()*4);
-      for(let r=0;r<rotations;r++) shape = rotateShape(shape);
-      if(Math.random() < 0.5) shape = flipShape(shape);
-      const blockCount = shape.flat().reduce((a,b)=>a+b,0);
-      const isSquare = shape.length === shape[0].length && shape.length > 1;
-      if(shape.length <= ROWS && shape[0].length <= COLS && (!isSquare || blockCount <= 4)){
-        const colorChoice = Math.floor(Math.random()*COLORS.length);
-        currentPalette.push({shape: shape, colorIdx: colorChoice});
-        count++;
-      }
-      tries++;
+  // DEBUG: 現在の配置セル数とパレット状態をログ
+  try{
+    let debugCurrentCells = 0;
+    for(let i=0;i<currentPalette.length;i++){
+      const s = currentPalette[i].shape;
+      for(let yy=0; yy<s.length; yy++) for(let xx=0; xx<s[yy].length; xx++) if(s[yy][xx]) debugCurrentCells++;
     }
-    // paletteが1つも埋まらなかった場合は、必ず1ブロック（[[1]]）を追加
+    console.debug('[createPalette] blocksPlaced=', blocksPlaced, 'currentPalette.length=', currentPalette.length, 'currentPaletteCells=', debugCurrentCells, 'limit=', BLOCKS_PER_GAME_LIMIT);
+  }catch(e){/* ignore */}
+    // 新仕様: currentPalette が空のときに3個まとめて生成する
     if(currentPalette.length === 0){
-      currentPalette.push({shape: [[1]], colorIdx: 0});
+      let batch = [];
+      let tries = 0;
+      while(batch.length < 3 && tries < 300){
+        let idx;
+        const r = Math.random();
+        if(r < 0.07){
+          idx = Math.floor(Math.random()*2);
+        }else if(r < 0.22){
+          idx = 2 + Math.floor(Math.random()*3);
+        }else if(r < 0.37){
+          idx = 14 + Math.floor(Math.random()*9);
+        }else{
+          idx = 5 + Math.floor(Math.random()*(14-5));
+        }
+        let shape = SHAPES[idx];
+        const rotations = Math.floor(Math.random()*4);
+        for(let r=0;r<rotations;r++) shape = rotateShape(shape);
+        if(Math.random() < 0.5) shape = flipShape(shape);
+        const blockCount = shape.flat().reduce((a,b)=>a+b,0);
+        const isSquare = shape.length === shape[0].length && shape.length > 1;
+        if(shape.length <= ROWS && shape[0].length <= COLS && (!isSquare || blockCount <= 4)){
+          batch.push({shape: shape, cellCount: blockCount});
+        }
+        tries++;
+      }
+      // batch の合計セル数を計算し、上限を越えない範囲で currentPalette に追加
+      let batchCells = batch.reduce((s,it)=>s+it.cellCount,0);
+      if(blocksPlaced + batchCells <= BLOCKS_PER_GAME_LIMIT){
+        // 色を付けて currentPalette に追加
+        batch.forEach(it=>{
+          const colorChoice = Math.floor(Math.random()*COLORS.length);
+          currentPalette.push({shape: it.shape, colorIdx: colorChoice});
+        });
+      } else {
+        // 上限超過の場合、可能な限り頭から詰める（例えば1つか2つだけ追加）
+        let acc = 0;
+        for(let i=0;i<batch.length;i++){
+          if(blocksPlaced + acc + batch[i].cellCount <= BLOCKS_PER_GAME_LIMIT){
+            const colorChoice = Math.floor(Math.random()*COLORS.length);
+            currentPalette.push({shape: batch[i].shape, colorIdx: colorChoice});
+            acc += batch[i].cellCount;
+          }
+        }
+        // それでも空なら単一セルを試す
+        if(currentPalette.length === 0 && blocksPlaced + 1 <= BLOCKS_PER_GAME_LIMIT){
+          currentPalette.push({shape: [[1]], colorIdx: 0});
+        }
+        // 上限により追加できなければ gameOver をセット
+        if(currentPalette.length === 0 && blocksPlaced >= BLOCKS_PER_GAME_LIMIT){
+          if(!gameOver){ gameOver = true; alert(`ブロック生成上限（${BLOCKS_PER_GAME_LIMIT}）に達しました。`); }
+        }
+      }
+      console.debug('[createPalette] batch fill -> added', currentPalette.map(p=>p.shape.flat().reduce((a,b)=>a+b,0)));
+    }
+  // パレット生成後に上限到達していれば、以降はパレットを生成しない
+  // currentPalette のセル数合計を計算して判定する
+  {
+    let currentPaletteCells = 0;
+    for(let i=0;i<currentPalette.length;i++){
+      const s = currentPalette[i].shape;
+      for(let yy=0; yy<s.length; yy++) for(let xx=0; xx<s[yy].length; xx++) if(s[yy][xx]) currentPaletteCells++;
+    }
+    if(blocksPlaced + currentPaletteCells >= BLOCKS_PER_GAME_LIMIT){
+      // 既に配置済みセル数 + パレット内セル数合計が上限に達している場合、これ以上の生成は行わない。
+      // currentPalette はそのまま残し、プレイヤーは配置を続けられる。
     }
   }
   currentPalette.forEach((item, i) => {
@@ -439,6 +509,8 @@ canvas.onmousedown = function(e) {
     currentPalette.splice(selectedBlockIdx, 1);
     selectedBlockIdx = null;
     previewPx = null; previewPy = null;
+  // DEBUG: ログ配置後の状態
+  try{ console.debug('[onmousedown] placed shape; blocksPlaced=', blocksPlaced, 'currentPalette.length=', currentPalette.length); }catch(e){}
   createPalette();
   } else {
     alert('その位置には置けません');
@@ -475,6 +547,8 @@ function startBlockGame(){
   blockScore = 0;
   gameOver = false;
   currentPalette = [];
+  // ゲーム開始時に配置カウンタをリセット
+  blocksPlaced = 0;
   drawGrid();
   createPalette();
 }
