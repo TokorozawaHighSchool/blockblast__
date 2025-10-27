@@ -4,7 +4,8 @@ const ROWS = 8;
 const BLOCK_SIZE = 60;
 // 白基調の寒色系パレット（やや濃く、紫系を追加）
 const COLORS = [
-  '#f3fbff','#dff5ff','#cfeaff','#9fdff6','#7fcff6','#6fb8e6','#b9a8ff','#a08bff', // 既存寒色系
+  // 先頭の淡色は視認性が低かったため、やや濃くしてコントラストを上げる
+  '#cd9fe2ff','#94f3eeff','#b7e6f5','#83dff0','#5fcff0','#4b9fd8','#b9a8ff','#a08bff', // 寒色系（調整済）
   '#ffb3b3','#ff6666','#ffb347','#ffe066', // 赤・オレンジ・黄系
   '#b3ffb3','#66ff66','#47ffb3','#66ffe0', // 緑・エメラルド系
   '#b3b3ff','#6666ff','#e066ff','#ff66d9', // 青・紫・ピンク系
@@ -33,6 +34,16 @@ const SHAPES = [
   // L字型（横3＋縦3、縦棒が端）
   [[1,1,1],[1,0,0],[1,0,0]], // L字型（左端）
   [[1,1,1],[0,0,1],[0,0,1]] // L字型（右端）
+  ,
+  // 追加シェイプ: ここから種類を増やす
+  [[1,1,1],[1,1,1]], // 横長2x3長方形（6ブロック）
+  [[0,1,0],[1,1,1],[0,1,0]], // プラス型（5ブロック）
+  [[1,0,1],[1,1,1]], // U字型（上に隙間）
+  [[1,1],[1,0]], // 2x2 の一欠け（3ブロック）
+  [[1,1,0],[0,1,1],[0,0,1]], // ねじれたスネーク系（複雑形）
+  [[1,0,0],[1,1,1],[0,0,1]], // 中間の複合L
+  [[1,1,1,1,1]], // 横長5
+  [[1],[1,1,1],[1]] // 小さな十字に近い形（5ブロック）
 ];
 const blocks = [
   [[1]], // 1ブロック
@@ -43,10 +54,17 @@ const blocks = [
 ];
 let grid = Array.from({length:ROWS},()=>Array(COLS).fill(0));
 let blockScore = 0;
+// 表示用のスコア（アニメで表示される値）
+let displayedScore = 0;
+// スコアアニメーション用の状態
+let scoreAnim = { raf: null, from: 0, to: 0, start: 0, duration: 600 };
 let comboMultiplier = 1;
 let gameOver = false;
 // 1ゲームあたりに生成できるブロックのセル数合計の上限（配置済みセル数 + パレット内セル数合計で管理）
 const BLOCKS_PER_GAME_LIMIT = 5000;
+// スコア換算の倍率（1で現状のスコア）
+// ユーザ要望によりデフォルトを 3 に設定（以前は 5）
+const SCORE_MULTIPLIER = 3;
 // プレイヤーが実際に配置したセル数の合計をカウント
 let blocksPlaced = 0;
 const scoreEl = document.getElementById('scoreDisplay');
@@ -117,32 +135,42 @@ function drawGrid(glowingRows = [], glowingCols = []) {
   }
   // ゲームオーバー時に「No Space」をブロック風フォントで表示
   if(gameOver && ctx){
-  ctx.save();
-  // 半透明オーバーレイで背景を暗くする
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // DOMオーバーレイが存在して表示中なら、キャンバス上の重複描画は行わない
+    try{
+      const ov = document.getElementById('gameOverOverlay');
+      if(ov && ov.style.display && ov.style.display !== 'none'){
+        // DOM側で表示しているためキャンバス描画はスキップ
+      } else {
+        ctx.save();
+        // 半透明オーバーレイで背景を暗くする
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // 大きな見出し（英語）
-  const mainMsg = 'GAME OVER';
-  const mainFontSize = Math.floor(canvas.width * 0.16); // 画面幅に対して大きめ
-  ctx.font = `bold ${mainFontSize}px 'Press Start 2P', 'Arial Black', sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  // 外枠（暗）→ 内側の明色で視認性を確保
-  ctx.lineWidth = Math.max(6, Math.floor(canvas.width * 0.02));
-  ctx.strokeStyle = '#222';
-  ctx.strokeText(mainMsg, canvas.width/2, canvas.height/2 - Math.floor(mainFontSize*0.08));
-  ctx.fillStyle = '#ffe600';
-  ctx.fillText(mainMsg, canvas.width/2, canvas.height/2 - Math.floor(mainFontSize*0.08));
+        // 大きな見出し（英語）
+        const mainMsg = 'GAME OVER';
+        const mainFontSize = Math.floor(canvas.width * 0.16); // 画面幅に対して大きめ
+        ctx.font = `bold ${mainFontSize}px 'Press Start 2P', 'Arial Black', sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // 外枠（暗）→ 内側の明色で視認性を確保
+        ctx.lineWidth = Math.max(6, Math.floor(canvas.width * 0.02));
+        ctx.strokeStyle = '#222';
+        ctx.strokeText(mainMsg, canvas.width/2, canvas.height/2 - Math.floor(mainFontSize*0.08));
+        ctx.fillStyle = '#ffe600';
+        ctx.fillText(mainMsg, canvas.width/2, canvas.height/2 - Math.floor(mainFontSize*0.08));
 
-  // 補助テキスト（日本語または短い説明）
-  const subMsg = '置けるブロックがありません';
-  const subFontSize = Math.floor(canvas.width * 0.055);
-  ctx.font = `bold ${subFontSize}px 'Arial', sans-serif`;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(subMsg, canvas.width/2, canvas.height/2 + Math.floor(mainFontSize*0.26));
+        // 補助テキスト（日本語または短い説明）
+        const subMsg = '置けるブロックがありません';
+        const subFontSize = Math.floor(canvas.width * 0.055);
+        ctx.font = `bold ${subFontSize}px 'Arial', sans-serif`;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(subMsg, canvas.width/2, canvas.height/2 + Math.floor(mainFontSize*0.26));
 
-  ctx.restore();
+        ctx.restore();
+      }
+    }catch(e){
+      // documentが未定義等、何かあっても致命的にはしない
+    }
   }
 }
 
@@ -190,15 +218,15 @@ function clearLines(){
           lines++;
         }
         // ライン消去ボーナス（連鎖倍率適用）
-        blockScore += lines*50*comboMultiplier;
-  blockScore += lines*100*comboMultiplier;
+    addToScore((lines*50*comboMultiplier) * SCORE_MULTIPLIER);
+  addToScore((lines*100*comboMultiplier) * SCORE_MULTIPLIER);
         comboMultiplier++;
         updateScore();
         drawGrid();
         // 全消し判定（盤面がすべて0）
         const isAllClear = grid.every(row => row.every(cell => cell === 0));
         if(isAllClear) {
-          blockScore += 1000; // 全消しボーナス
+          addToScore(1000 * SCORE_MULTIPLIER); // 全消しボーナス
           updateScore();
         }
         // ライン消去後にpalette内のブロックがどこにも置けない場合はゲームオーバー
@@ -219,7 +247,7 @@ function clearLines(){
           }
           if(!canPlaceAny) {
             gameOver = true;
-            alert('ゲームオーバー！置ける場所がありません');
+            showGameOverOverlay();
           }
         }
       }, 180);
@@ -260,9 +288,9 @@ function placeBlock(shape, px, py, colorIdx){
     const nx = px+x, ny = py+y;
     if(nx>=0&&nx<COLS&&ny>=0&&ny<ROWS) placed++;
   }
-  blockScore += placed;
-  blockScore += placed;
-  blockScore += placed; // 2倍加点
+  addToScore(placed * SCORE_MULTIPLIER);
+  addToScore(placed * SCORE_MULTIPLIER);
+  addToScore(placed * SCORE_MULTIPLIER); // 2倍加点
   updateScore();
   clearLines();
   drawGrid();
@@ -277,7 +305,56 @@ function placeBlock(shape, px, py, colorIdx){
 }
 
 function updateScore(){
-  if(scoreEl) scoreEl.textContent = `スコア: ${blockScore}`;
+  if(!scoreEl) return;
+  // 桁区切りで表示（例: 1,234）
+  scoreEl.textContent = `スコア: ${formatNumber(displayedScore)}`;
+}
+
+function formatNumber(n){
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// スロット風にスコアを増加させる
+function addToScore(amount){
+  if(typeof amount !== 'number' || amount <= 0) return;
+  // ブロックの実スコアは即時反映（ゲームロジックが参照するため）
+  blockScore += Math.floor(amount);
+  // 目的地を更新
+  const now = performance.now();
+  // 既にアニメ中なら現在の表示値を起点にして延長
+  if(scoreAnim.raf){
+    // 現在の表示値を算出して上書き
+    cancelAnimationFrame(scoreAnim.raf);
+    scoreAnim.raf = null;
+    // displayedScore はすでに最新のフレーム値
+  }
+  scoreAnim.from = displayedScore;
+  scoreAnim.to = blockScore;
+  // durationを増分に応じて調整（大きい増分は長めに見せるが最大2000ms）
+  const delta = Math.abs(scoreAnim.to - scoreAnim.from);
+  scoreAnim.duration = Math.min(1600, 300 + Math.sqrt(delta) * 45);
+  scoreAnim.start = now;
+  function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
+  // slotっぽいランダム挙動: 末尾の桁をランダムに揺らしながら収束
+  function step(){
+    const t = Math.min(1, (performance.now() - scoreAnim.start) / scoreAnim.duration);
+    const e = easeOutCubic(t);
+    const base = Math.floor(scoreAnim.from + (scoreAnim.to - scoreAnim.from) * e);
+    // ジッター: アニメ終盤は小さく、序盤は大きめ
+    const jitterMax = Math.max(0, Math.floor((1 - e) * 50));
+    const jitter = jitterMax > 0 ? Math.floor((Math.random() - 0.5) * jitterMax) : 0;
+    displayedScore = Math.max(0, base + jitter);
+    updateScore();
+    if(t < 1){
+      scoreAnim.raf = requestAnimationFrame(step);
+    } else {
+      // 終了時は正確な最終値にセット
+      displayedScore = scoreAnim.to;
+      updateScore();
+      scoreAnim.raf = null;
+    }
+  }
+  scoreAnim.raf = requestAnimationFrame(step);
 }
 
 function drawBlockPreview(shape, colorIdx, ctx2d, offsetX, offsetY){
@@ -422,7 +499,7 @@ function createPalette(){
         }
         // 上限により追加できなければ gameOver をセット
         if(currentPalette.length === 0 && blocksPlaced >= BLOCKS_PER_GAME_LIMIT){
-          if(!gameOver){ gameOver = true; alert(`ブロック生成上限（${BLOCKS_PER_GAME_LIMIT}）に達しました。`); }
+          if(!gameOver){ gameOver = true; showGameOverOverlay(); }
         }
       }
       console.debug('[createPalette] batch fill -> added', currentPalette.map(p=>p.shape.flat().reduce((a,b)=>a+b,0)));
@@ -482,7 +559,7 @@ function createPalette(){
     if(!canPlaceAny) {
       if(!gameOver) {
         gameOver = true;
-        alert('ゲームオーバー！置ける場所がありません');
+        showGameOverOverlay();
       }
     } else {
       // 置けるブロックがあればゲーム続行
@@ -556,3 +633,51 @@ function startBlockGame(){
 if(canvas && ctx && paletteDiv){
   startBlockGame();
 }
+
+// --- GAME OVER オーバーレイ要素の挿入と表示制御 ---
+// ページの body に配置することで、キャンバス外にはみ出しても確実に見える
+const gameOverOverlayId = 'gameOverOverlay';
+function ensureGameOverOverlay(){
+  if(document.getElementById(gameOverOverlayId)) return;
+  const ov = document.createElement('div');
+  ov.id = gameOverOverlayId;
+  ov.style.position = 'fixed';
+  ov.style.left = '50%';
+  ov.style.top = '50%';
+  ov.style.transform = 'translate(-50%, -50%)';
+  ov.style.pointerEvents = 'none';
+  ov.style.zIndex = '9999';
+  // はみ出しても見えるように大きなテキストと外側スペースを用意
+  ov.style.padding = '20px 40px';
+  ov.style.whiteSpace = 'nowrap';
+  ov.style.textAlign = 'center';
+  ov.style.display = 'none';
+  // 影と縁取りはcanvas内と似せる
+  // 文字のみ表示（枠線・背景なし）。大きめの文字と外側テキストシャドウで視認性を確保
+  ov.innerHTML = `<div style="display:inline-block;padding:0 8px;font-family:'Press Start 2P','Arial Black',sans-serif;font-size:32px;color:#a08bff;text-shadow:0 6px 18px rgba(32,64,85,0.35), 0 0 40px rgba(160,139,255,0.25);">GAME OVER</div>`;
+  document.body.appendChild(ov);
+}
+
+function showGameOverOverlay(){
+  ensureGameOverOverlay();
+  const ov = document.getElementById(gameOverOverlayId);
+  if(!ov) return;
+  ov.style.display = 'block';
+  // 画面サイズに対して文字を大きくして見切れを回避
+  const inner = ov.firstElementChild;
+  const baseSize = Math.max(28, Math.floor(Math.min(window.innerWidth, window.innerHeight) * 0.08));
+  inner.style.fontSize = baseSize + 'px';
+  // pointerEvents を有効にしても良ければクリックでリスタート等を実装可能
+}
+
+function hideGameOverOverlay(){
+  const ov = document.getElementById(gameOverOverlayId);
+  if(ov) ov.style.display = 'none';
+}
+
+// ウィンドウリサイズ時にサイズを調整
+window.addEventListener('resize', ()=>{
+  const ov = document.getElementById(gameOverOverlayId);
+  if(ov && ov.style.display === 'block') showGameOverOverlay();
+});
+
