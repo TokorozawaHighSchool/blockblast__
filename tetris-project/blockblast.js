@@ -60,11 +60,14 @@ let displayedScore = 0;
 let scoreAnim = { raf: null, from: 0, to: 0, start: 0, duration: 600 };
 let comboMultiplier = 1;
 let gameOver = false;
+// ライン消去アニメ中かどうか（アニメ中は一時的に置けなくても game over 表示を抑止する）
+let clearingInProgress = false;
 // 1ゲームあたりに生成できるブロックのセル数合計の上限（配置済みセル数 + パレット内セル数合計で管理）
 const BLOCKS_PER_GAME_LIMIT = 5000;
 // スコア換算の倍率（1で現状のスコア）
-// ユーザ要望によりデフォルトを 3 に設定（以前は 5）
-const SCORE_MULTIPLIER = 3;
+// ユーザ要望によりデフォルトを大きく設定（以前は 3）
+// ここを変えるだけで全体の得点を増やせます
+const SCORE_MULTIPLIER = 10;
 // プレイヤーが実際に配置したセル数の合計をカウント
 let blocksPlaced = 0;
 const scoreEl = document.getElementById('scoreDisplay');
@@ -197,6 +200,8 @@ function clearLines(){
     if(colFull) glowingCols.push(x);
   }
   if(glowingRows.length > 0 || glowingCols.length > 0){
+  // ライン消去アニメが始まるのでフラグを立てる
+  clearingInProgress = true;
     // 光らせる
     drawGrid(glowingRows, glowingCols);
     setTimeout(()=>{
@@ -246,11 +251,16 @@ function clearLines(){
             if(canPlaceAny) break;
           }
           if(!canPlaceAny) {
-            gameOver = true;
-            showGameOverOverlay();
+            // 消去アニメ中は一時的に置けないだけかもしれないので表示を抑止
+            if(!clearingInProgress){
+              gameOver = true;
+              showGameOverOverlay();
+            }
           }
         }
-      }, 180);
+        // 消去処理がすべて終わったのでフラグを戻す
+        clearingInProgress = false;
+  }, 180);
     }, 180);
   } else {
     comboMultiplier = 1;
@@ -557,7 +567,8 @@ function createPalette(){
       if(canPlaceAny) break;
     }
     if(!canPlaceAny) {
-      if(!gameOver) {
+      // ライン消去アニメ中は一時的に置けないだけかもしれないので表示を抑止
+      if(!gameOver && !clearingInProgress) {
         gameOver = true;
         showGameOverOverlay();
       }
