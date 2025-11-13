@@ -1,15 +1,16 @@
 // 積み上げ型ブロックブラスト
 const COLS = 8;
 const ROWS = 8;
-const BLOCK_SIZE = 60;
+// BLOCK_SIZE will be computed dynamically to make the canvas fill the available space
+let BLOCK_SIZE = 60;
 // 白基調の寒色系パレット（やや濃く、紫系を追加）
 const COLORS = [
   // 先頭の淡色は視認性が低かったため、やや濃くしてコントラストを上げる
-  '#cd9fe2ff','#94f3eeff','#b7e6f5','#83dff0','#5fcff0','#4b9fd8','#b9a8ff','#a08bff', // 寒色系（調整済）
-  '#ffb3b3','#ff6666','#ffb347','#fde37bff', // 赤・オレンジ・黄系
-  '#b3ffb3','#8dfa5bff','#47ffb3','#66ffe0', // 緑・エメラルド系
-  '#b3b3ff','#6666ff','#e066ff','#ff66d9', // 青・紫・ピンク系
-  '#ff99cc','#ffccf9','#c2f0fc','#f6ffb3'  // パステル系
+  '#C2AAE6','#77B6C2','#5C9BBC','#F03C32','#ACA7BB','#ABD3D8','#A58CDC','#A590AF', // 寒色系（調整済）
+  '#7CA1F0','#FF8C9B','#4DD7E3','#FAC31E', // 赤・オレンジ・黄系
+  '#00A6FE','#DCFF50','#6EB487','#64C8F0', // 緑・エメラルド系
+  '#C10E49','#5A5FAA','#DC3C41','#8C4664', // 青・紫・ピンク系
+  '#192332','#2C35BD','#D8E9FC','#BA6EA5'  // パステル系
 ];
 const SHAPES = [
   // Tetromino + some extra shapes
@@ -58,7 +59,8 @@ let blockScore = 0;
 let displayedScore = 0;
 // スコアアニメーション用の状態
 let scoreAnim = { raf: null, from: 0, to: 0, start: 0, duration: 600 };
-let comboMultiplier = 1;
+// comboCount: number of successive clears in a row. Used to compute combo bonus: 10 * comboCount
+let comboCount = 0;
 let gameOver = false;
 // ライン消去アニメ中かどうか（アニメ中は一時的に置けなくても game over 表示を抑止する）
 let clearingInProgress = false;
@@ -78,6 +80,23 @@ if(!paletteDiv) {
   alert('paletteDivが取得できません。HTMLに<div id="blockPalette"></div>があるか確認してください。');
 }
 
+// 均等色分布: カラーバッグ（全色をシャッフルして使い切りで補充）
+let colorBag = [];
+function shuffle(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]] = [arr[j],arr[i]];
+  }
+  return arr;
+}
+function refillColorBag(){
+  colorBag = shuffle(Array.from({length: COLORS.length}, (_,i)=>i));
+}
+function nextColorIdx(){
+  if(colorBag.length === 0) refillColorBag();
+  return colorBag.pop();
+}
+
 function drawGrid(glowingRows = [], glowingCols = []) {
   if (!ctx) return;
   ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -88,7 +107,6 @@ function drawGrid(glowingRows = [], glowingCols = []) {
     ctx.beginPath();
     ctx.moveTo(0, y*BLOCK_SIZE);
     ctx.lineTo(COLS*BLOCK_SIZE, y*BLOCK_SIZE);
-    ctx.stroke();
   }
   for(let x=0; x<=COLS; x++){
     ctx.beginPath();
@@ -106,30 +124,26 @@ function drawGrid(glowingRows = [], glowingCols = []) {
         ctx.fillRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
         // 光らせる行・列なら上書き
         if (glowingRows.includes(y) || glowingCols.includes(x)) {
-          // 強い黄色～白グラデーションで光らせる
           const glowGrad = ctx.createLinearGradient(gx, gy, gx, gy + BLOCK_SIZE);
           glowGrad.addColorStop(0, 'rgba(255,255,0,0.95)');
           glowGrad.addColorStop(0.5, 'rgba(255,255,180,0.85)');
           glowGrad.addColorStop(1, 'rgba(255,255,255,0.7)');
           ctx.fillStyle = glowGrad;
           ctx.fillRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
-          // 枠線も黄色に
           ctx.strokeStyle = '#ffe600';
           ctx.lineWidth = 3;
           ctx.strokeRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
         }
-        // ガラス風の光沢（上部に半透明グラデ）
+        // 光沢や輪郭
         const glossGrad = ctx.createLinearGradient(gx, gy, gx, gy + BLOCK_SIZE * 0.5);
         glossGrad.addColorStop(0, 'rgba(255,255,255,0.85)');
         glossGrad.addColorStop(1, 'rgba(255,255,255,0.08)');
         ctx.fillStyle = glossGrad;
         ctx.fillRect(gx + 2, gy + 2, BLOCK_SIZE - 4, Math.floor(BLOCK_SIZE * 0.45));
-        // 小さなハイライト点
         ctx.fillStyle = 'rgba(255,255,255,0.6)';
         ctx.beginPath();
         ctx.ellipse(gx + BLOCK_SIZE * 0.26, gy + BLOCK_SIZE * 0.16, BLOCK_SIZE * 0.12, BLOCK_SIZE * 0.06, 0, 0, Math.PI * 2);
         ctx.fill();
-        // 輪郭
         ctx.strokeStyle = '#7eaec4';
         ctx.lineWidth = 1;
         ctx.strokeRect(gx, gy, BLOCK_SIZE, BLOCK_SIZE);
@@ -177,6 +191,68 @@ function drawGrid(glowingRows = [], glowingCols = []) {
   }
 }
 
+// Resize logic: compute BLOCK_SIZE so that the grid (COLS x ROWS) fits the viewport
+function resizeCanvasToFit() {
+  if (!canvas) return;
+  const bodyStyle = getComputedStyle(document.body);
+  const verticalPadding = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
+
+  // 実際の占有高さを測る
+  const headerEl = document.querySelector('h1');
+  const scoreElDom = scoreEl;
+  const paletteEl = paletteDiv;
+  const headerH = headerEl ? headerEl.offsetHeight : 0;
+  const scoreH = scoreElDom ? scoreElDom.offsetHeight : 0;
+  const paletteH = paletteEl ? paletteEl.offsetHeight : 0;
+  const gaps = 24 + 12 + 12; // h1上の余白, canvas上下の余白をおおよそ
+
+  const availableH = Math.max(100, window.innerHeight - (verticalPadding + headerH + scoreH + paletteH + gaps));
+  const availableW = Math.max(140, Math.min(window.innerWidth - 24, document.documentElement.clientWidth - 24));
+
+  const blockSizeByWidth = Math.floor(availableW / COLS);
+  const blockSizeByHeight = Math.floor(availableH / ROWS);
+  const newBlockSize = Math.max(20, Math.min(blockSizeByWidth, blockSizeByHeight));
+
+  BLOCK_SIZE = newBlockSize;
+  const width = COLS * BLOCK_SIZE;
+  const height = ROWS * BLOCK_SIZE;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = width + 'px';
+  canvas.style.height = height + 'px';
+  canvas.width = Math.floor(width * dpr);
+  canvas.height = Math.floor(height * dpr);
+  if (ctx && ctx.scale) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  drawGrid();
+}
+
+// debounce helper
+function debounce(fn, wait=120){
+  let t = null;
+  return function(...a){
+    clearTimeout(t);
+    t = setTimeout(()=>fn.apply(this,a), wait);
+  };
+}
+
+// initialize sizing on load
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  resizeCanvasToFit();
+} else {
+  window.addEventListener('DOMContentLoaded', resizeCanvasToFit);
+}
+
+// handle window resize
+window.addEventListener('resize', debounce(resizeCanvasToFit, 120));
+
+// パレットの中身が変わったら高さが変わるため再計算
+try{
+  if (paletteDiv) {
+    const mo = new MutationObserver(debounce(resizeCanvasToFit, 60));
+    mo.observe(paletteDiv, { childList: true, subtree: true, attributes: true });
+  }
+}catch(e){/* ignore */}
+
 function getColor(idx){
   if(typeof idx === 'number' && idx >= 0 && idx < COLORS.length) return COLORS[idx];
   return '#dfeef7'; // フォールバックは淡い寒色グレー
@@ -222,10 +298,9 @@ function clearLines(){
           }
           lines++;
         }
-        // ライン消去ボーナス（連鎖倍率適用）
-    addToScore((lines*50*comboMultiplier) * SCORE_MULTIPLIER);
-  addToScore((lines*100*comboMultiplier) * SCORE_MULTIPLIER);
-        comboMultiplier++;
+  // コンボボーナス: 10 × comboCount × 同時消去本数(lines)
+  comboCount++;
+  addToScore(10 * comboCount * lines);
         updateScore();
         drawGrid();
         // 全消し判定（盤面がすべて0）
@@ -263,7 +338,8 @@ function clearLines(){
   }, 180);
     }, 180);
   } else {
-    comboMultiplier = 1;
+    // リセット: 連続消去が途切れたらコンボを0に戻す
+    comboCount = 0;
   }
 }
 
@@ -298,9 +374,7 @@ function placeBlock(shape, px, py, colorIdx){
     const nx = px+x, ny = py+y;
     if(nx>=0&&nx<COLS&&ny>=0&&ny<ROWS) placed++;
   }
-  addToScore(placed * SCORE_MULTIPLIER);
-  addToScore(placed * SCORE_MULTIPLIER);
-  addToScore(placed * SCORE_MULTIPLIER); // 2倍加点
+    addToScore(placed);
   updateScore();
   clearLines();
   drawGrid();
@@ -490,7 +564,7 @@ function createPalette(){
       if(blocksPlaced + batchCells <= BLOCKS_PER_GAME_LIMIT){
         // 色を付けて currentPalette に追加
         batch.forEach(it=>{
-          const colorChoice = Math.floor(Math.random()*COLORS.length);
+          const colorChoice = nextColorIdx();
           currentPalette.push({shape: it.shape, colorIdx: colorChoice});
         });
       } else {
@@ -498,14 +572,14 @@ function createPalette(){
         let acc = 0;
         for(let i=0;i<batch.length;i++){
           if(blocksPlaced + acc + batch[i].cellCount <= BLOCKS_PER_GAME_LIMIT){
-            const colorChoice = Math.floor(Math.random()*COLORS.length);
+            const colorChoice = nextColorIdx();
             currentPalette.push({shape: batch[i].shape, colorIdx: colorChoice});
             acc += batch[i].cellCount;
           }
         }
         // それでも空なら単一セルを試す
         if(currentPalette.length === 0 && blocksPlaced + 1 <= BLOCKS_PER_GAME_LIMIT){
-          currentPalette.push({shape: [[1]], colorIdx: 0});
+          currentPalette.push({shape: [[1]], colorIdx: nextColorIdx()});
         }
         // 上限により追加できなければ gameOver をセット
         if(currentPalette.length === 0 && blocksPlaced >= BLOCKS_PER_GAME_LIMIT){

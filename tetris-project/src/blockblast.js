@@ -1,7 +1,8 @@
 // 積み上げ型ブロックブラスト
 const COLS = 8;
 const ROWS = 8;
-const BLOCK_SIZE = 60;
+// BLOCK_SIZE will be computed dynamically to make the canvas fill the available space
+let BLOCK_SIZE = 60;
 // 白基調の寒色系パレット（やや濃く、紫系を追加）
 const COLORS = [
   // 先頭の淡色は視認性が低かったため、やや濃くしてコントラストを上げる
@@ -58,7 +59,8 @@ let blockScore = 0;
 let displayedScore = 0;
 // スコアアニメーション用の状態
 let scoreAnim = { raf: null, from: 0, to: 0, start: 0, duration: 600 };
-let comboMultiplier = 1;
+// comboCount: number of successive clears in a row. Used to compute combo bonus: 10 * comboCount
+let comboCount = 0;
 let gameOver = false;
 // ライン消去アニメ中かどうか（アニメ中は一時的に置けなくても game over 表示を抑止する）
 let clearingInProgress = false;
@@ -77,6 +79,73 @@ const paletteDiv = document.getElementById('blockPalette');
 if(!paletteDiv) {
   alert('paletteDivが取得できません。HTMLに<div id="blockPalette"></div>があるか確認してください。');
 }
+
+// 均等色分布: カラーバッグ
+let colorBag = [];
+function shuffle(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]] = [arr[j],arr[i]];
+  }
+  return arr;
+}
+function refillColorBag(){
+  colorBag = shuffle(Array.from({length: COLORS.length}, (_,i)=>i));
+}
+function nextColorIdx(){
+  if(colorBag.length === 0) refillColorBag();
+  return colorBag.pop();
+}
+
+// Resize logic: compute BLOCK_SIZE so that the grid (COLS x ROWS) fits the viewport
+function resizeCanvasToFit() {
+  if (!canvas) return;
+  const bodyStyle = getComputedStyle(document.body);
+  const verticalPadding = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
+  const headerEl = document.querySelector('h1');
+  const scoreElDom = scoreEl;
+  const paletteEl = paletteDiv;
+  const headerH = headerEl ? headerEl.offsetHeight : 0;
+  const scoreH = scoreElDom ? scoreElDom.offsetHeight : 0;
+  const paletteH = paletteEl ? paletteEl.offsetHeight : 0;
+  const gaps = 24 + 12 + 12;
+  const availableH = Math.max(100, window.innerHeight - (verticalPadding + headerH + scoreH + paletteH + gaps));
+  const availableW = Math.max(140, Math.min(window.innerWidth - 24, document.documentElement.clientWidth - 24));
+  const blockSizeByWidth = Math.floor(availableW / COLS);
+  const blockSizeByHeight = Math.floor(availableH / ROWS);
+  const newBlockSize = Math.max(20, Math.min(blockSizeByWidth, blockSizeByHeight));
+  BLOCK_SIZE = newBlockSize;
+  const width = COLS * BLOCK_SIZE;
+  const height = ROWS * BLOCK_SIZE;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = width + 'px';
+  canvas.style.height = height + 'px';
+  canvas.width = Math.floor(width * dpr);
+  canvas.height = Math.floor(height * dpr);
+  if (ctx && ctx.scale) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawGrid();
+}
+
+function debounce(fn, wait=120){
+  let t = null;
+  return function(...a){
+    clearTimeout(t);
+    t = setTimeout(()=>fn.apply(this,a), wait);
+  };
+}
+
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  resizeCanvasToFit();
+} else {
+  window.addEventListener('DOMContentLoaded', resizeCanvasToFit);
+}
+window.addEventListener('resize', debounce(resizeCanvasToFit, 120));
+try{
+  if (paletteDiv) {
+    const mo = new MutationObserver(debounce(resizeCanvasToFit, 60));
+    mo.observe(paletteDiv, { childList: true, subtree: true, attributes: true });
+  }
+}catch(e){/* ignore */}
 
 function drawGrid(glowingRows = [], glowingCols = []) {
   if (!ctx) return;
@@ -222,10 +291,9 @@ function clearLines(){
           }
           lines++;
         }
-        // ライン消去ボーナス（連鎖倍率適用）
-    addToScore((lines*50*comboMultiplier) * SCORE_MULTIPLIER);
-  addToScore((lines*100*comboMultiplier) * SCORE_MULTIPLIER);
-        comboMultiplier++;
+  // コンボボーナス: 10 × comboCount × 同時消去本数(lines)
+  comboCount++;
+  addToScore(10 * comboCount * lines);
         updateScore();
         drawGrid();
         // 全消し判定（盤面がすべて0）
@@ -263,7 +331,7 @@ function clearLines(){
   }, 180);
     }, 180);
   } else {
-    comboMultiplier = 1;
+    comboCount = 0;
   }
 }
 
@@ -298,9 +366,8 @@ function placeBlock(shape, px, py, colorIdx){
     const nx = px+x, ny = py+y;
     if(nx>=0&&nx<COLS&&ny>=0&&ny<ROWS) placed++;
   }
-  addToScore(placed * SCORE_MULTIPLIER);
-  addToScore(placed * SCORE_MULTIPLIER);
-  addToScore(placed * SCORE_MULTIPLIER); // 2倍加点
+  // 1ブロックにつき1点
+  addToScore(placed);
   updateScore();
   clearLines();
   drawGrid();
@@ -490,7 +557,7 @@ function createPalette(){
       if(blocksPlaced + batchCells <= BLOCKS_PER_GAME_LIMIT){
         // 色を付けて currentPalette に追加
         batch.forEach(it=>{
-          const colorChoice = Math.floor(Math.random()*COLORS.length);
+          const colorChoice = nextColorIdx();
           currentPalette.push({shape: it.shape, colorIdx: colorChoice});
         });
       } else {
@@ -498,14 +565,14 @@ function createPalette(){
         let acc = 0;
         for(let i=0;i<batch.length;i++){
           if(blocksPlaced + acc + batch[i].cellCount <= BLOCKS_PER_GAME_LIMIT){
-            const colorChoice = Math.floor(Math.random()*COLORS.length);
+            const colorChoice = nextColorIdx();
             currentPalette.push({shape: batch[i].shape, colorIdx: colorChoice});
             acc += batch[i].cellCount;
           }
         }
         // それでも空なら単一セルを試す
         if(currentPalette.length === 0 && blocksPlaced + 1 <= BLOCKS_PER_GAME_LIMIT){
-          currentPalette.push({shape: [[1]], colorIdx: 0});
+          currentPalette.push({shape: [[1]], colorIdx: nextColorIdx()});
         }
         // 上限により追加できなければ gameOver をセット
         if(currentPalette.length === 0 && blocksPlaced >= BLOCKS_PER_GAME_LIMIT){
