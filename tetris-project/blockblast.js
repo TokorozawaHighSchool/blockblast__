@@ -10,7 +10,8 @@ const COLORS = [
   '#7CA1F0','#FF8C9B','#4DD7E3','#FAC31E', // 赤・オレンジ・黄系
   '#00A6FE','#DCFF50','#6EB487','#64C8F0', // 緑・エメラルド系
   '#C10E49','#5A5FAA','#DC3C41','#8C4664', // 青・紫・ピンク系
-  '#192332','#2C35BD','#D8E9FC','#BA6EA5'  // パステル系
+   '#192332','#2C35BD','#D8E9FC','#BA6EA5', // パステル系
+   '#A09BD8', // 追加のパステル系
 ];
 const SHAPES = [
   // Tetromino + some extra shapes
@@ -22,7 +23,6 @@ const SHAPES = [
   [[1,0,0],[1,1,1]], // J
   [[0,0,1],[1,1,1]], // L
   // Additional small shapes
-  [[1]], // single
   [[1,1]], // domino
   [[1],[1],[1]], // vertical 3
   [[1,1,1]], // horizontal 3
@@ -37,7 +37,6 @@ const SHAPES = [
   [[1,1,1],[0,0,1],[0,0,1]] // L字型（右端）
   ,
   // 追加シェイプ: ここから種類を増やす
-  [[1,1,1],[1,1,1]], // 横長2x3長方形（6ブロック）
   [[0,1,0],[1,1,1],[0,1,0]], // プラス型（5ブロック）
   [[1,0,1],[1,1,1]], // U字型（上に隙間）
   [[1,1],[1,0]], // 2x2 の一欠け（3ブロック）
@@ -46,8 +45,38 @@ const SHAPES = [
   [[1,1,1,1,1]], // 横長5
   [[1],[1,1,1],[1]] // 小さな十字に近い形（5ブロック）
 ];
+
+// NOTE: Rare-shapes are chosen by name, not hard-coded indices, to avoid index drift.
+// Rare candidates: 3x3 square, large L (left/right), composite L variant.
+
+// Helper to compare shapes (2D arrays of 0/1)
+function shapesEqual(a, b){
+  if(!a || !b) return false;
+  if(a.length !== b.length) return false;
+  for(let y=0;y<a.length;y++){
+    if(a[y].length !== b[y].length) return false;
+    for(let x=0;x<a[y].length;x++){
+      if(a[y][x] !== b[y][x]) return false;
+    }
+  }
+  return true;
+}
+
+// Patterns we consider rare (base orientation)
+const RARE_PATTERNS = [
+  [[1,1,1],[1,1,1],[1,1,1]], // 3x3 full square
+  [[1,1,1],[1,0,0],[1,0,0]], // large L (left)
+  [[1,1,1],[0,0,1],[0,0,1]], // large L (right)
+  [[1,0,0],[1,1,1],[0,0,1]]  // composite L
+];
+
+// Compute rare indices dynamically from SHAPES to avoid index drift
+const RARE_SHAPE_INDICES = SHAPES.reduce((acc, sh, i)=>{
+  if(RARE_PATTERNS.some(p => shapesEqual(sh, p))) acc.push(i);
+  return acc;
+}, []);
+
 const blocks = [
-  [[1]], // 1ブロック
   // 他のブロック定義
   [[1,1]],
   [[1,1,1]],
@@ -70,6 +99,8 @@ const BLOCKS_PER_GAME_LIMIT = 5000;
 // ユーザ要望によりデフォルトを大きく設定（以前は 3）
 // ここを変えるだけで全体の得点を増やせます
 const SCORE_MULTIPLIER = 10;
+// パレット表示は盤面より少し大きく（比率）
+const PALETTE_SCALE = 1.05;
 // プレイヤーが実際に配置したセル数の合計をカウント
 let blocksPlaced = 0;
 const scoreEl = document.getElementById('scoreDisplay');
@@ -298,9 +329,14 @@ function clearLines(){
           }
           lines++;
         }
-  // コンボボーナス: 10 × comboCount × 同時消去本数(lines)
+  // 新スコア: 同時消去本数に応じた基点 × (comboCount+1)
+  // 基点テーブル（1~6本）: [10,20,60,120,200,300]
+  const baseByLines = [0,10,20,60,120,200,300];
+  const clamped = Math.max(0, Math.min(lines, 6));
+  const base = baseByLines[clamped] || 0;
+  const comboMultiplier = (comboCount + 1);
+  addToScore(base * comboMultiplier);
   comboCount++;
-  addToScore(10 * comboCount * lines);
         updateScore();
         drawGrid();
         // 全消し判定（盤面がすべて0）
@@ -441,14 +477,14 @@ function addToScore(amount){
   scoreAnim.raf = requestAnimationFrame(step);
 }
 
-function drawBlockPreview(shape, colorIdx, ctx2d, offsetX, offsetY){
+function drawBlockPreview(shape, colorIdx, ctx2d, offsetX, offsetY, blockSize = BLOCK_SIZE){
   const base = getColor(colorIdx);
   // プレビュー用: 必ず正方形で描画
   for(let y=0;y<shape.length;y++){
     for(let x=0;x<shape[y].length;x++){
       if(shape[y][x]){
         // 正方形で描画
-        const size = BLOCK_SIZE;
+  const size = blockSize;
         const gx = offsetX + x*size;
         const gy = offsetY + y*size;
         ctx2d.fillStyle = base;
@@ -537,16 +573,23 @@ function createPalette(){
       let batch = [];
       let tries = 0;
       while(batch.length < 3 && tries < 300){
-        let idx;
-        const r = Math.random();
-        if(r < 0.07){
-          idx = Math.floor(Math.random()*2);
-        }else if(r < 0.22){
-          idx = 2 + Math.floor(Math.random()*3);
-        }else if(r < 0.37){
-          idx = 14 + Math.floor(Math.random()*9);
-        }else{
-          idx = 5 + Math.floor(Math.random()*(14-5));
+          let idx;
+          let pickedRare = false;
+          // Rare selection using dynamic rare indices
+          if(Math.random() < 0.04 && RARE_SHAPE_INDICES.length > 0){
+            idx = RARE_SHAPE_INDICES[Math.floor(Math.random()*RARE_SHAPE_INDICES.length)];
+            pickedRare = true;
+          } else {
+          const r = Math.random();
+          if(r < 0.07){
+            idx = Math.floor(Math.random()*2);
+          }else if(r < 0.22){
+            idx = 2 + Math.floor(Math.random()*3);
+          }else if(r < 0.37){
+            idx = 14 + Math.floor(Math.random()*9);
+          }else{
+            idx = 5 + Math.floor(Math.random()*(14-5));
+          }
         }
         let shape = SHAPES[idx];
         const rotations = Math.floor(Math.random()*4);
@@ -554,8 +597,13 @@ function createPalette(){
         if(Math.random() < 0.5) shape = flipShape(shape);
         const blockCount = shape.flat().reduce((a,b)=>a+b,0);
         const isSquare = shape.length === shape[0].length && shape.length > 1;
-        if(shape.length <= ROWS && shape[0].length <= COLS && (!isSquare || blockCount <= 4)){
+          // Accept if fits, and square is either small (<=4) or chosen as rare (e.g., 3x3)
+          if(shape.length <= ROWS && shape[0].length <= COLS && (!isSquare || blockCount <= 4 || pickedRare)){
           batch.push({shape: shape, cellCount: blockCount});
+          // debug: log when a rare-shaped index was chosen (approx 4% chance)
+          try{
+              if(RARE_SHAPE_INDICES.includes(idx)) console.debug('[createPalette] rare-shape chosen idx=', idx);
+          }catch(e){}
         }
         tries++;
       }
@@ -578,8 +626,8 @@ function createPalette(){
           }
         }
         // それでも空なら単一セルを試す
-        if(currentPalette.length === 0 && blocksPlaced + 1 <= BLOCKS_PER_GAME_LIMIT){
-          currentPalette.push({shape: [[1]], colorIdx: nextColorIdx()});
+        if(currentPalette.length === 0 && blocksPlaced + 2 <= BLOCKS_PER_GAME_LIMIT){
+          currentPalette.push({shape: [[1,1]], colorIdx: nextColorIdx()});
         }
         // 上限により追加できなければ gameOver をセット
         if(currentPalette.length === 0 && blocksPlaced >= BLOCKS_PER_GAME_LIMIT){
@@ -607,7 +655,8 @@ function createPalette(){
     // プレビューは必ず正方形のcanvas（最大サイズ基準）
     const blockW = shape[0].length;
     const blockH = shape.length;
-    const canvasSize = Math.max(blockW, blockH) * BLOCK_SIZE;
+  const paletteBlock = Math.max(20, Math.round(BLOCK_SIZE * PALETTE_SCALE));
+  const canvasSize = Math.max(blockW, blockH) * paletteBlock;
     const canvasEl = document.createElement('canvas');
     canvasEl.width = canvasSize;
     canvasEl.height = canvasSize;
@@ -615,9 +664,9 @@ function createPalette(){
     if(selectedBlockIdx === i) canvasEl.style.border = '2px solid #2196f3';
     const ctx2d = canvasEl.getContext('2d');
     // 中央に配置
-    const offsetX = Math.floor((canvasSize - blockW*BLOCK_SIZE)/2);
-    const offsetY = Math.floor((canvasSize - blockH*BLOCK_SIZE)/2);
-    drawBlockPreview(shape, colorIdx, ctx2d, offsetX, offsetY);
+  const offsetX = Math.floor((canvasSize - blockW*paletteBlock)/2);
+  const offsetY = Math.floor((canvasSize - blockH*paletteBlock)/2);
+  drawBlockPreview(shape, colorIdx, ctx2d, offsetX, offsetY, paletteBlock);
     canvasEl.addEventListener('click', () => {
   selectedBlockIdx = i;
   previewPx = null; previewPy = null;
