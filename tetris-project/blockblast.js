@@ -2,6 +2,7 @@
 const COLS = 8;
 const ROWS = 8;
 // BLOCK_SIZE will be computed dynamically to make the canvas fill the available space
+// 画面サイズ変動を防ぐため固定ブロックサイズ
 let BLOCK_SIZE = 60;
 // 白基調の寒色系パレット（やや濃く、紫系を追加）
 const COLORS = [
@@ -223,28 +224,9 @@ function drawGrid(glowingRows = [], glowingCols = []) {
 }
 
 // Resize logic: compute BLOCK_SIZE so that the grid (COLS x ROWS) fits the viewport
-function resizeCanvasToFit() {
-  if (!canvas) return;
-  const bodyStyle = getComputedStyle(document.body);
-  const verticalPadding = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
-
-  // 実際の占有高さを測る
-  const headerEl = document.querySelector('h1');
-  const scoreElDom = scoreEl;
-  const paletteEl = paletteDiv;
-  const headerH = headerEl ? headerEl.offsetHeight : 0;
-  const scoreH = scoreElDom ? scoreElDom.offsetHeight : 0;
-  const paletteH = paletteEl ? paletteEl.offsetHeight : 0;
-  const gaps = 24 + 12 + 12; // h1上の余白, canvas上下の余白をおおよそ
-
-  const availableH = Math.max(100, window.innerHeight - (verticalPadding + headerH + scoreH + paletteH + gaps));
-  const availableW = Math.max(140, Math.min(window.innerWidth - 24, document.documentElement.clientWidth - 24));
-
-  const blockSizeByWidth = Math.floor(availableW / COLS);
-  const blockSizeByHeight = Math.floor(availableH / ROWS);
-  const newBlockSize = Math.max(20, Math.min(blockSizeByWidth, blockSizeByHeight));
-
-  BLOCK_SIZE = newBlockSize;
+// 以前は画面に合わせて動的リサイズしていたが、サイズが変わる問題があるため固定サイズで描画する。
+function initFixedCanvas(){
+  if(!canvas) return;
   const width = COLS * BLOCK_SIZE;
   const height = ROWS * BLOCK_SIZE;
   const dpr = window.devicePixelRatio || 1;
@@ -253,7 +235,6 @@ function resizeCanvasToFit() {
   canvas.width = Math.floor(width * dpr);
   canvas.height = Math.floor(height * dpr);
   if (ctx && ctx.scale) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
   drawGrid();
 }
 
@@ -268,18 +249,20 @@ function debounce(fn, wait=120){
 
 // initialize sizing on load
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
-  resizeCanvasToFit();
+  initFixedCanvas();
 } else {
-  window.addEventListener('DOMContentLoaded', resizeCanvasToFit);
+  window.addEventListener('DOMContentLoaded', initFixedCanvas);
 }
 
 // handle window resize
-window.addEventListener('resize', debounce(resizeCanvasToFit, 120));
+// リサイズ時もサイズを維持（何もしない）
+// window.addEventListener('resize', ()=>{});
 
 // パレットの中身が変わったら高さが変わるため再計算
 try{
   if (paletteDiv) {
-    const mo = new MutationObserver(debounce(resizeCanvasToFit, 60));
+  // 高さ変化を監視してもキャンバスサイズは変えない
+  const mo = new MutationObserver(()=>{});
     mo.observe(paletteDiv, { childList: true, subtree: true, attributes: true });
   }
 }catch(e){/* ignore */}
@@ -345,6 +328,9 @@ function clearLines(){
           addToScore(1000 * SCORE_MULTIPLIER); // 全消しボーナス
           updateScore();
         }
+        // この時点で消去アニメは完了。判定前にフラグを解除しておく。
+        clearingInProgress = false;
+
         // ライン消去後にpalette内のブロックがどこにも置けない場合はゲームオーバー
         if(currentPalette.length > 0) {
           let canPlaceAny = false;
@@ -362,15 +348,12 @@ function clearLines(){
             if(canPlaceAny) break;
           }
           if(!canPlaceAny) {
-            // 消去アニメ中は一時的に置けないだけかもしれないので表示を抑止
-            if(!clearingInProgress){
-              gameOver = true;
-              showGameOverOverlay();
-            }
+            gameOver = true;
+            showGameOverOverlay();
           }
         }
-        // 消去処理がすべて終わったのでフラグを戻す
-        clearingInProgress = false;
+        // 仕上げの再描画（必要に応じて）
+        drawGrid();
   }, 180);
     }, 180);
   } else {
@@ -796,6 +779,8 @@ function showGameOverOverlay(){
   ensureGameOverOverlay();
   const ov = document.getElementById(gameOverOverlayId);
   if(!ov) return;
+  // 状態と表示を同期
+  gameOver = true;
   ov.style.display = 'block';
   // 画面サイズに対して文字を大きくして見切れを回避
   const inner = ov.firstElementChild;
